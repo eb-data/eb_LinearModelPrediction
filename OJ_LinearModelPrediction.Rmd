@@ -1,0 +1,178 @@
+---
+title: "Orange Juice Purchase Analysis: Minute Maid vs Citrus Hill"
+author: "Evan Baker"
+date: "11/29/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction:
+As requested I have completed the analysis on orange juice purchases, specifically the Minute Maid and Citrus Hill brands. The goal of this analysis is to understand the effect of different variables on a customer's purchase decision, gain insight on how to boost Minute Maid sales, and create a predictive model that can accurately predict a customer's purchase outcome.
+
+This document contains:
+* Introduction
+* Methods & Analysis
+* Recommendations & Findings
+* Supplemental Visualizations & Data Dictionary
+
+
+## Methods & Analysis
+To complete this analysis I have calculated correlations, tested different logistic models, and developed a SVM prediction model.
+
+### Data Methods
+With the given data set I found that many of the variables were highly correlated with each other, due to the nature of how they were calculated. Most of this data set is made up of pricing data, much of which tells the same information but with respect to different variables. This was causing a poor fit and multicollinearity in logistic regressions encompassing all variables. The goal is to have a model in which the independent variables are not highly correlated, yet have a significant effect on the dependent variable. Eventually I was able to narrow down my model to three variables: PriceDiff, LoyalCH, and StoreID. These variables encompass price, loyalty, and location, which I believe to be a suitable scope to look at this topic through.
+
+I did not alter any variables for this analysis, but I did add some binary variables indicating a Minute Maid or Citrus Hills Purchase. These variables are used in place of 'Purchase' in some calculations for ease of use.
+
+## Reccomendations & Findings
+
+### Findings
+
+* Minute Maid Customers are price sensitive. Demand will fall as price goes up. 
+
+* Customers respond positively to Minute Maid specials
+
+* If a customer is loyal to Citrus Hill, based on purchase history, they are likely not to buy or switch to Minute Maid even with pricing changes.
+
+### Reccomendations
+
+* Manage and track the pricing of Minute Maid more closely. Avoid any extra markup on price. I am happy to hop in a meeting with the pricing team and my findings on OJ pricing and purchase decsions.
+
+* Customer's respond positively to Minute Maid Specials, run specials as needed to bolster sales and compete with Citrus Hills.
+
+* Obtain more customer segmenting data in order to build a more comprehensive customer profile and stronger predictive models. With more data on Customer's we can access a much larger range of variables and create more opportunities and insights.
+
+### Summary
+There is a decent amount correlation between price changes and Minute Maid sales. The customer seems to be reluctant to spend money on Minute Maid, yet Citrus Hill OJ is not affected by price nearly as much. This could be a quality or branding issue, but for our purposes we should be paying very close attention to price of Minute Maid. I am aware that we are aiming to keep a certain profit margin though. Customers respond well to specials, and perhaps we can do some market basket analysis to understand what customers are buying with Minute Maid. There could be opportunity to change placement of products with respect to Minute Maid, or offer discounts and coupons on groups of items. I would also reccomend some targeted advertising towards Citrus Hill customers to see if we can pull any over to the Minute Maid side. We would need some more information on these customer segments, but diving into why these customers are loyal to Citrus Hill could provide valuable insights on the orange juice customer segment in general. Store 7 also seems to have a negative correlation with Minute Maid sales, we should reach out to the store manager to see if this is a physical issue.
+
+# Complete Code & Models
+### PACKAGE LOADING
+```{r, results= FALSE, message=FALSE}
+library(tidyverse)
+library(ggcorrplot)
+library(psych)
+library(caret)
+library(rminer)
+library(kernlab)
+library(plotROC)
+library(e1071)
+```
+
+### DATA IMPORT & CLEANING
+```{r}
+#import data
+OJ<-read.csv(url("http://data.mishra.us/files/OJ.csv"))
+#create binary indicator for MM & CH purchases, and 'Store7'
+OJ <- OJ %>%
+            mutate(S7 = case_when(endsWith(Store7, "No") ~ 0,endsWith(Store7, "Yes") ~ 1)) %>%
+            mutate(MMPurchase = case_when(endsWith(Purchase, "CH") ~ 0,endsWith(Purchase, "MM") ~ 1)) %>%
+            mutate(CHPurchase = case_when(endsWith(Purchase, "CH") ~ 1,endsWith(Purchase, "MM") ~ 0))
+#factor 'Purchase' & 'Store7'
+OJ$Purchase <- as.factor(OJ$Purchase)
+OJ$Store7 <- as.factor(OJ$Store7)
+OJ$StoreID <- factor(OJ$StoreID, levels = c(1,2,3,4,7))
+
+#create numeric df, also create binary 'Store7' variable
+OJnumeric <- OJ %>%
+  select_if(is.numeric)
+
+str(OJ)
+```
+### DATA EXPLORATION & VISUALIZATION 
+```{r}
+#take a look at correlation of all numeric variables
+newcorr <- round(cor(OJnumeric),2)
+ggcorrplot(newcorr, hc.order = TRUE, type = "lower")
+
+#pricing variables correlation with 'MMPurchase'
+OJpricing <- OJ %>% select(PriceCH,PriceMM,DiscCH,DiscMM,SalePriceMM,SalePriceCH,PriceDiff)
+cor(OJ$MMPurchase,OJpricing)
+ggcorrplot(cor(OJ$MMPurchase,OJpricing))
+
+#other variables interesting
+cor(OJ$MMPurchase,OJ$LoyalCH)
+cor(OJ$MMPurchase,OJ$S7)
+
+#targeted look at every numeric variable's correlation with 'MMPurchase'
+corrlist <- cor(OJnumeric$MMPurchase,OJnumeric)
+ggcorrplot(corrlist)
+
+#Correlations of PctDisc and OJ purchases
+cor(OJ$PctDiscMM,OJ$PctDiscCH)
+cor(OJ$PctDiscMM,OJ$MMPurchase)
+cor(OJ$PctDiscCH,OJ$CHPurchase)
+
+cor(OJ$PriceMM,OJ$MMPurchase)
+cor(OJ$PriceCH,OJ$CHPurchase)
+cor(OJ$SpecialMM,OJ$MMPurchase)
+
+```
+
+### EXPLORING LOGISTIC REGRESSION MODELS
+```{r}
+#explore models with AIC score.
+#best vars found: {PriceDiff + LoyalCH + StoreID} AIC: 839
+
+#Model 1: Uses all variables except binary purchase indicators
+Model1 <- glm(Purchase ~ . - MMPurchase - CHPurchase, data = OJ, family = binomial(link = "logit"))
+
+#Model 2: Uses 'PriceDiff', 'LoyalCH', and 'StoreID'. Simplest model with lowest AIC found
+Model2 <- glm(Purchase ~ PriceDiff + LoyalCH + StoreID, data = OJ, family = binomial(link = "logit"))
+
+#Model 3: Uses everything but removes correlated pricing data
+Model3 <- glm(Purchase ~ . - MMPurchase - CHPurchase - SalePriceMM - SalePriceCH - PctDiscMM - PctDiscCH, data = OJ, family = binomial(link = "logit"))
+
+print(paste("Model 1:", AIC(Model1), "Model 2:",
+              AIC(Model2), "Model 3:", AIC(Model3)))
+
+#I will use Model2 to create a predictive model as it produces the lowest AIC score
+
+#Find the model summaries below
+summary(Model1)
+summary(Model2)
+summary(Model3)
+```
+
+
+### PREDICTIVE LOGISTIC REGRESSION MODEL
+```{r}
+set.seed(801)
+#split data
+split = .7
+train_index <- sample(1:nrow(OJ), split * nrow(OJ))
+test_index <- setdiff(1:nrow(OJ), train_index)
+
+train_data <- OJ[train_index,]
+test_data <- OJ[test_index,]
+
+#Model with best AIC from Data Exploration
+predictionModel <- glm(Purchase ~ PriceDiff + LoyalCH + StoreID, data = train_data,
+family = binomial(link = "logit"))
+
+test_data$prediction <- predict(predictionModel,
+newdata = test_data, type = "response")
+
+#set threshold of 50% for generated probabilties above
+test_data$binary_prediction <- ifelse(test_data$prediction >.5, 1,0)
+
+#caclulate binary 'correct' column that indicates if prediction is correct
+test_data <- test_data %>% mutate(correct = case_when(binary_prediction == MMPurchase ~ 1,binary_prediction != MMPurchase ~ 0))
+accuracy <- sum(test_data$correct)/nrow(test_data)
+print(paste("The accuracy of the model on the test_data is:",round(accuracy,3)))
+```
+### PREDICTIVE SVM
+```{r}
+svmModel <- svm(Purchase ~ PriceDiff + LoyalCH + StoreID, data = train_data)
+svmPredict <- predict(svmModel, test_data, type = "response")
+
+svmTestData <- test_data %>% select(-correct) %>%mutate(svmPrediction = svmPredict) %>% mutate(svmCorrect = case_when(svmPrediction == Purchase ~ 1, svmPrediction != Purchase ~ 0))  
+str(svmTestData)
+svmAccuracy <- sum(svmTestData$svmCorrect)/nrow(svmTestData)
+print(paste("The accuracy of the SVM model on the test_data is:",round(svmAccuracy,3)))
+```
+
+
+
